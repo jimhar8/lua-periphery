@@ -8,6 +8,8 @@ ifndef LUA
 LUA = lua
 endif
 
+LUA_INCDIR = /usr/include/lua5.2
+
 ifndef LUA_INCDIR
 LUA_CFLAGS = $(shell pkg-config --cflags $(LUA))
 else
