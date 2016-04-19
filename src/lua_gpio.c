@@ -13,7 +13,9 @@
 #include <stdint.h>
 #include <errno.h>
 
-#include <c-periphery/src/gpio.h>
+//<c-periphery/src/gpio.h>
+#include "../c-periphery/src/gpio.h"   
+#include "../c-periphery/src/event_gpio.h"
 #include "lua_periphery.h"
 #include "lua_compat.h"
 
@@ -34,6 +36,8 @@ gpio:write(value <boolean>)
 gpio:poll(timeout_ms <number>) --> <boolean>
 gpio:close()
 
+gpio:add_event_detect(<integer>, <callback>) 
+ 
 -- Properties
 gpio.fd                     immutable <number>
 gpio.pin                    immutable <number>
@@ -41,6 +45,15 @@ gpio.supports_interrupts    immutable <boolean>
 gpio.direction              mutable <string>
 gpio.edge                   mutable <string>
 */
+
+struct lua_callback
+{
+   unsigned int gpio_pin;
+   int lua_cb;
+   lua_State *L;
+   struct lua_callback *next;
+};
+static struct lua_callback *lua_callbacks = NULL;
 
 static const char *gpio_error_code_strings[] = {
     [-GPIO_ERROR_ARG]           = "GPIO_ERROR_ARG",
@@ -81,6 +94,64 @@ static int lua_gpio_error(lua_State *L, enum gpio_error_code code, int c_errno, 
 
     return lua_error(L);
 }
+
+static void run_lua_callbacks(unsigned int gpio)
+{
+   //PyObject *result;
+   //PyGILState_STATE gstate;
+   struct lua_callback *cb = lua_callbacks;
+
+   while (cb != NULL)
+   {
+      if (cb->gpio_pin == gpio) {
+         // run callback
+//         gstate = PyGILState_Ensure();
+//         result = PyObject_CallFunction(cb->py_cb, "i", chan_from_gpio(gpio));
+//         if (result == NULL && PyErr_Occurred()){
+//            PyErr_Print();
+//            PyErr_Clear();
+//         }
+//         Py_XDECREF(result);
+//         PyGILState_Release(gstate);
+          
+          lua_rawgeti(cb->L,LUA_REGISTRYINDEX,cb->lua_cb);
+          lua_pcall(cb->L, 0, 0, 0);          
+      }
+      cb = cb->next;
+   }
+}
+
+static int add_lua_callback(unsigned int gpio, int cb_func, lua_State *L)
+{
+   struct lua_callback *new_lua_cb;
+   struct lua_callback *cb = lua_callbacks;
+
+   // add callback to lua_callbacks list
+   new_lua_cb = malloc(sizeof(struct lua_callback));
+   if (new_lua_cb == 0)
+   {
+      //PyErr_NoMemory();
+      return -1;
+   }
+   new_lua_cb->lua_cb = cb_func;
+   new_lua_cb->L = L;  //???
+
+   //Py_XINCREF(cb_func);         // Add a reference to new callback
+   new_lua_cb->gpio_pin = gpio;
+   new_lua_cb->next = NULL;
+   if (lua_callbacks == NULL) {
+      lua_callbacks = new_lua_cb;
+   } else {
+      // add to end of list
+      while (cb->next != NULL)
+         cb = cb->next;
+      cb->next = new_lua_cb;
+   }
+   add_edge_callback(gpio, run_lua_callbacks);
+   return 0;
+}
+
+
 
 static void lua_gpio_checktype(lua_State *L, int index, int type) {
     if (lua_type(L, index) != type)
@@ -190,6 +261,56 @@ static int lua_gpio_write(lua_State *L) {
     if ((ret = gpio_write(gpio, value)) < 0)
         return lua_gpio_error(L, ret, gpio_errno(gpio), "Error: %s", gpio_errmsg(gpio));
 
+    return 0;
+}
+
+
+static int lua_gpio_add_event_detect(lua_State *L) {
+    gpio_t *gpio;
+    int bouncetime;
+    int ret;
+    int result;
+    int cb_func;
+
+    gpio = luaL_checkudata(L, 1, "periphery.GPIO");
+	
+    // bounce time
+    if (lua_isnumber(L, 2))
+    {
+        bouncetime = lua_tointeger(L, 2);
+    
+        if (bouncetime <= 0 && bouncetime != -666)
+        {
+           return lua_gpio_error(L, GPIO_ERROR_ARG, 0, "Bouncetime must be greater than 0");
+        }
+    }
+    else
+    {
+        return lua_gpio_error(L, GPIO_ERROR_ARG, 0, "Error: invalid value type (number or boolean expected, got %s)", lua_typename(L, lua_type(L, 2)));
+    }
+	
+    if ((result = add_edge_detect(gpio->pin, (unsigned int) gpio->edge, bouncetime)) != 0) // starts a thread
+    {
+        if (result == 1) {
+            return lua_gpio_error(L, GPIO_ERROR_ARG, 0, "Conflicting edge detection already enabled for this GPIO channel");
+
+        } else {
+            return lua_gpio_error(L, GPIO_ERROR_ARG, 0, "Failed to add edge detection");
+
+        }
+    }
+    
+    if (lua_isfunction(L,3))
+    {
+        cb_func = luaL_ref(L, LUA_REGISTRYINDEX);          
+    }    
+	
+    // add callback    
+    if (cb_func >= 0 )
+        if (add_lua_callback(gpio->pin, cb_func, L) != 0)
+            return 0;
+	
+ 
     return 0;
 }
 
@@ -364,6 +485,8 @@ static int lua_gpio_newindex(lua_State *L) {
 
         if ((ret = gpio_set_edge(gpio, edge)) < 0)
             return lua_gpio_error(L, ret, gpio_errno(gpio), "Error: %s", gpio_errmsg(gpio));
+        
+        gpio->edge = GPIO_EDGE_NONE;
 
         return 0;
     }
@@ -376,6 +499,7 @@ static const struct luaL_Reg periphery_gpio_m[] = {
     {"read", lua_gpio_read},
     {"write", lua_gpio_write},
     {"poll", lua_gpio_poll},
+    {"add_event_detect", lua_gpio_add_event_detect},
     {"__gc", lua_gpio_close},
     {"__tostring", lua_gpio_tostring},
     {"__index", lua_gpio_index},

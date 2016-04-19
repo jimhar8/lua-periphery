@@ -4,11 +4,15 @@ SRCS = src/lua_periphery.c src/lua_mmio.c src/lua_gpio.c src/lua_spi.c src/lua_i
 C_PERIPHERY = c-periphery
 C_PERIPHERY_LIB = $(C_PERIPHERY)/periphery.a
 
+DEBUG = -g
+
 ifndef LUA
 LUA = lua
 endif
 
 LUA_INCDIR = /usr/include/lua5.2
+LUA_LIBDIR = /usr/local/lib/lua/5.2
+
 
 ifndef LUA_INCDIR
 LUA_CFLAGS = $(shell pkg-config --cflags $(LUA))
@@ -19,7 +23,7 @@ endif
 ###########################################################################
 
 CFLAGS += -std=c99 -pedantic -D_XOPEN_SOURCE=700
-CFLAGS += -Wall -Wextra -Wno-unused-parameter $(DEBUG) -fPIC -I. $(LUA_CFLAGS)
+CFLAGS += -Wall -Wextra -Wno-unused-parameter $(DEBUG) -pthread -fPIC -I. $(LUA_CFLAGS)
 LDFLAGS += -shared
 
 ###########################################################################
@@ -34,8 +38,8 @@ clean:
 
 .PHONY: install
 install:
-	mkdir -p $(LUA_LIBDIR)
-	cp $(LIB) $(LUA_LIBDIR)/$(LIB)
+#	mkdir -p $(LUA_LIBDIR)
+	sudo cp $(LIB) $(LUA_LIBDIR)/$(LIB)
 
 ###########################################################################
 
