@@ -36,7 +36,7 @@ gpio:write(value <boolean>)
 gpio:poll(timeout_ms <number>) --> <boolean>
 gpio:close()
 
-gpio:add_event_detect(<integer>, <callback>) 
+gpio:add_event_detect(pin <integer>, edge_type <integer>, bounce_time <integer>, <callback>) 
  
 -- Properties
 gpio.fd                     immutable <number>
@@ -50,10 +50,11 @@ struct lua_callback
 {
    unsigned int gpio_pin;
    int lua_cb;
-   lua_State *L;
    struct lua_callback *next;
 };
 static struct lua_callback *lua_callbacks = NULL;
+
+static lua_State *g_L;
 
 static const char *gpio_error_code_strings[] = {
     [-GPIO_ERROR_ARG]           = "GPIO_ERROR_ARG",
@@ -114,14 +115,14 @@ static void run_lua_callbacks(unsigned int gpio)
 //         Py_XDECREF(result);
 //         PyGILState_Release(gstate);
           
-          lua_rawgeti(cb->L,LUA_REGISTRYINDEX,cb->lua_cb);
-          lua_pcall(cb->L, 0, 0, 0);          
+          lua_rawgeti(g_L,LUA_REGISTRYINDEX,cb->lua_cb);
+          lua_pcall(g_L, 0, 0, 0);          
       }
       cb = cb->next;
    }
 }
 
-static int add_lua_callback(unsigned int gpio, int cb_func, lua_State *L)
+static int add_lua_callback(unsigned int gpio, int cb_func)
 {
    struct lua_callback *new_lua_cb;
    struct lua_callback *cb = lua_callbacks;
@@ -134,7 +135,7 @@ static int add_lua_callback(unsigned int gpio, int cb_func, lua_State *L)
       return -1;
    }
    new_lua_cb->lua_cb = cb_func;
-   new_lua_cb->L = L;  //???
+   //new_lua_cb->L = L;  //???
 
    //Py_XINCREF(cb_func);         // Add a reference to new callback
    new_lua_cb->gpio_pin = gpio;
@@ -264,20 +265,46 @@ static int lua_gpio_write(lua_State *L) {
     return 0;
 }
 
-
+//  gpio:add_event_detect(pin <integer>, edge_type <integer>, bounce_time <integer>, <callback>) 
 static int lua_gpio_add_event_detect(lua_State *L) {
     gpio_t *gpio;
     int bouncetime;
     int ret;
     int result;
     int cb_func;
+    int gpio_pin;
+    int edge_type;
+    
+    g_L = L;
 
     gpio = luaL_checkudata(L, 1, "periphery.GPIO");
-	
-    // bounce time
+    
+    // gpio pin
     if (lua_isnumber(L, 2))
     {
-        bouncetime = lua_tointeger(L, 2);
+        gpio_pin = lua_tointeger(L, 2);
+    }
+    else
+    {
+        return lua_gpio_error(L, GPIO_ERROR_ARG, 0, "Error: invalid value type (number expected, got %s)", lua_typename(L, lua_type(L, 2)));
+    }
+    
+    
+    // edge type
+    if (lua_isnumber(L, 3))
+    {
+        edge_type = lua_tointeger(L, 3);
+    }
+    else
+    {
+        return lua_gpio_error(L, GPIO_ERROR_ARG, 0, "Error: invalid value type (number expected, got %s)", lua_typename(L, lua_type(L, 3)));
+    }   
+    
+	
+    // bounce time
+    if (lua_isnumber(L, 4))
+    {
+        bouncetime = lua_tointeger(L, 4);
     
         if (bouncetime <= 0 && bouncetime != -666)
         {
@@ -286,10 +313,10 @@ static int lua_gpio_add_event_detect(lua_State *L) {
     }
     else
     {
-        return lua_gpio_error(L, GPIO_ERROR_ARG, 0, "Error: invalid value type (number or boolean expected, got %s)", lua_typename(L, lua_type(L, 2)));
+        return lua_gpio_error(L, GPIO_ERROR_ARG, 0, "Error: invalid value type (number or boolean expected, got %s)", lua_typename(L, lua_type(L, 4)));
     }
 	
-    if ((result = add_edge_detect(gpio->pin, (unsigned int) gpio->edge, bouncetime)) != 0) // starts a thread
+    if ((result = add_edge_detect(gpio_pin, (unsigned int) edge_type, bouncetime)) != 0) // starts a thread
     {
         if (result == 1) {
             return lua_gpio_error(L, GPIO_ERROR_ARG, 0, "Conflicting edge detection already enabled for this GPIO channel");
@@ -300,14 +327,15 @@ static int lua_gpio_add_event_detect(lua_State *L) {
         }
     }
     
-    if (lua_isfunction(L,3))
+    if (lua_isfunction(L,5))
     {
+        lua_pushvalue(L, 5);
         cb_func = luaL_ref(L, LUA_REGISTRYINDEX);          
     }    
 	
     // add callback    
     if (cb_func >= 0 )
-        if (add_lua_callback(gpio->pin, cb_func, L) != 0)
+        if (add_lua_callback(gpio_pin, cb_func) != 0)
             return 0;
 	
  

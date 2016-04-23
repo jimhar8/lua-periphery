@@ -181,6 +181,10 @@ end
 pin_input = tonumber(arg[1])
 pin_output = tonumber(arg[2])
 
+print("Attach debugger!")
+print("Press enter to continue...")
+io.read()
+
 test_arguments()
 pokay("Arguments test passed.")
 test_open_config_close()
