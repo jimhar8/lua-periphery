@@ -115,8 +115,8 @@ static void run_lua_callbacks(unsigned int gpio)
 //         Py_XDECREF(result);
 //         PyGILState_Release(gstate);
           
-          lua_rawgeti(g_L,LUA_REGISTRYINDEX,cb->lua_cb);
-          lua_pcall(g_L, 0, 0, 0);          
+          //lua_rawgeti(g_L,LUA_REGISTRYINDEX,cb->lua_cb);
+          //lua_pcall(g_L, 0, 0, 0);          
       }
       cb = cb->next;
    }
@@ -265,7 +265,33 @@ static int lua_gpio_write(lua_State *L) {
     return 0;
 }
 
-//  gpio:add_event_detect(pin <integer>, edge_type <integer>, bounce_time <integer>, <callback>) 
+
+static int lua_gpio_getcount(lua_State *L) {
+    gpio_t *gpio;
+    int value;
+    int ret;
+    int pin;
+
+    gpio = luaL_checkudata(L, 1, "periphery.GPIO");
+    
+    // gpio pin
+    if (lua_isnumber(L, 2))
+    {
+        pin = lua_tointeger(L, 2);
+        value = get_count(pin);
+    }
+    else
+    {
+        return lua_gpio_error(L, GPIO_ERROR_ARG, 0, "Error: invalid value type (number expected, got %s)", lua_typename(L, lua_type(L, 2)));
+    }
+    
+    lua_pushinteger(L, value);
+
+    return 1;
+}
+
+
+//  gpio:add_event_detect(pin <integer>, edge_type <integer>, bounce_time <integer>) 
 static int lua_gpio_add_event_detect(lua_State *L) {
     gpio_t *gpio;
     int bouncetime;
@@ -327,17 +353,11 @@ static int lua_gpio_add_event_detect(lua_State *L) {
         }
     }
     
-    if (lua_isfunction(L,5))
-    {
-        lua_pushvalue(L, 5);
-        cb_func = luaL_ref(L, LUA_REGISTRYINDEX);          
-    }    
-	
     // add callback    
     if (cb_func >= 0 )
-        if (add_lua_callback(gpio_pin, cb_func) != 0)
+        if (add_lua_callback(gpio_pin, NULL) != 0)
             return 0;
-	
+
  
     return 0;
 }
@@ -528,6 +548,7 @@ static const struct luaL_Reg periphery_gpio_m[] = {
     {"write", lua_gpio_write},
     {"poll", lua_gpio_poll},
     {"add_event_detect", lua_gpio_add_event_detect},
+    {"get_count", lua_gpio_getcount},
     {"__gc", lua_gpio_close},
     {"__tostring", lua_gpio_tostring},
     {"__index", lua_gpio_index},
